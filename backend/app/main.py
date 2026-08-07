@@ -1,19 +1,37 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.database.database import engine, Base
-from app.database import models
-
-# Create all tables
-Base.metadata.create_all(bind=engine)
+from app.core.config import settings
 
 app = FastAPI(
-    title="AI Software Development Team",
-    version="1.0"
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+)
+
+# CORS Configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",  # React/Vite frontend
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
 @app.get("/")
 def home():
     return {
-        "message": "AI Software Development Team Backend Running"
+        "project": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "status": "Running",
+        "message": "AI Software Development Team Backend"
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy"
     }
