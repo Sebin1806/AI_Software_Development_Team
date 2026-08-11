@@ -2,9 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.core.config import settings
+from app.core.logging_config import setup_logging
 from app.api.project import router as project_router
 from app.api.agent import router as agent_router
 from app.api.orchestrator import router as orchestrator_router
+
+setup_logging()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

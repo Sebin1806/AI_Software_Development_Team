@@ -15,9 +15,13 @@ email-validator
 
 python-multipart
 
+ollama
+pytest
+httpx
+
 langchain
 langgraph
 langchain-community
 
 chromadb
-sentence-transformers
+sentence-transformers
