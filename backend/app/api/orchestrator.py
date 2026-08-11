@@ -14,6 +14,7 @@ from app.schemas.orchestrator import (
     StartTaskResponse,
     TaskExecutionResultsResponse,
     TaskExecutionStatusResponse,
+    WorkflowSummarySchema,
 )
 
 router = APIRouter()
@@ -72,7 +73,21 @@ def start_software_task(
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
+            detail="Project not found or user unauthorized"
+        )
+
+    # Check for active running/pending task on same project
+    existing_active_task = db.query(TaskExecution).filter(
+        TaskExecution.project_id == request.project_id,
+        TaskExecution.status.in_(["pending", "running"])
+    ).first()
+
+    if existing_active_task:
+        return StartTaskResponse(
+            task_id=existing_active_task.id,
+            project_id=existing_active_task.project_id,
+            status=existing_active_task.status,
+            message="Active workflow task already in progress for this project."
         )
 
     task = TaskExecution(
@@ -125,7 +140,13 @@ def get_task_status(
         task_id=task.id,
         project_id=task.project_id,
         status=task.status,
+        current_step=task.current_step,
+        total_steps=task.total_steps,
+        percentage_completed=task.percentage_completed,
         current_agent=task.current_agent,
+        agents_completed=task.agents_completed,
+        agents_failed=task.agents_failed,
+        artifacts_generated=task.artifacts_generated,
         created_at=task.created_at,
         completed_at=task.completed_at,
         logs=[
@@ -163,22 +184,63 @@ def get_task_results(
             detail="Task execution not found"
         )
 
+    logs = db.query(AgentExecutionLog).filter(
+        AgentExecutionLog.task_execution_id == task_id
+    ).order_by(AgentExecutionLog.step_number.asc()).all()
+
+    agent_outputs = {}
+    code_review_findings = []
+    security_findings = []
+    generated_tests = []
+    deployment_config = []
+
+    for log in logs:
+        if log.output_data:
+            agent_outputs[log.agent_name] = log.output_data
+            if log.agent_name == "Code Reviewer":
+                code_review_findings = log.output_data.get("decisions", [])
+            elif log.agent_name == "Security Engineer":
+                security_findings = log.output_data.get("decisions", [])
+            elif log.agent_name == "Test Engineer":
+                generated_tests = log.output_data.get("deliverables", [])
+            elif log.agent_name == "DevOps Engineer":
+                deployment_config = log.output_data.get("deliverables", [])
+
     artifacts = db.query(AgentArtifact).filter(
-        AgentArtifact.task_execution_id == task_id
+        AgentArtifact.task_id == task_id
     ).order_by(AgentArtifact.created_at.asc()).all()
+
+    summary = WorkflowSummarySchema(
+        total_agents=task.total_steps,
+        agents_completed=task.agents_completed,
+        total_artifacts=len(artifacts),
+        code_review_findings=code_review_findings,
+        security_findings=security_findings,
+        generated_tests=generated_tests,
+        deployment_configuration=deployment_config,
+        overall_status=task.status
+    )
 
     return TaskExecutionResultsResponse(
         task_id=task.id,
         project_id=task.project_id,
         status=task.status,
+        workflow_summary=summary,
+        agent_outputs=agent_outputs,
         total_artifacts=len(artifacts),
         artifacts=[
             {
                 "id": art.id,
+                "task_id": art.task_id,
+                "project_id": art.project_id,
                 "agent_name": art.agent_name,
                 "file_name": art.file_name,
+                "relative_path": art.relative_path,
+                "category": art.category,
                 "file_type": art.file_type,
                 "content": art.content,
+                "version": art.version,
+                "content_hash": art.content_hash,
                 "created_at": art.created_at,
             }
             for art in artifacts
@@ -211,4 +273,4 @@ def cancel_task(
     task.status = "cancelled"
     db.commit()
 
-    return {"task_id": task.id, "status": "cancelled", "message": "Workflow cancellation requested successfully"}
+    return {"task_id": task.id, "status": "cancelled", "message": "Workflow cancellation requested successfully"}

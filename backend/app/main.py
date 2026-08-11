@@ -6,6 +6,7 @@ from app.core.logging_config import setup_logging
 from app.api.project import router as project_router
 from app.api.agent import router as agent_router
 from app.api.orchestrator import router as orchestrator_router
+from app.api.artifact import router as artifact_router
 
 setup_logging()
 
@@ -18,7 +19,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # React/Vite frontend
+        "*",  # Allow all dev origins for React/Vite
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -49,6 +50,12 @@ app.include_router(
     agent_router,
     prefix="/api/agents",
     tags=["Agents"]
+)
+
+app.include_router(
+    artifact_router,
+    prefix="/api",
+    tags=["Artifacts"]
 )
 
 

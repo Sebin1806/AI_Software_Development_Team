@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -11,30 +11,36 @@ from app.agents.project_manager_agent import ProjectManagerAgent
 from app.agents.business_analyst_agent import BusinessAnalystAgent
 from app.agents.software_architect_agent import SoftwareArchitectAgent
 from app.agents.database_engineer_agent import DatabaseEngineerAgent
-from app.agents.ui_ux_designer_agent import UIUXDesignerAgent
-from app.agents.frontend_developer_agent import FrontendDeveloperAgent
-from app.agents.backend_developer_agent import BackendDeveloperAgent
 from app.agents.api_developer_agent import APIDeveloperAgent
+from app.agents.ui_ux_designer_agent import UIUXDesignerAgent
+from app.agents.backend_developer_agent import BackendDeveloperAgent
+from app.agents.frontend_developer_agent import FrontendDeveloperAgent
 from app.agents.code_reviewer_agent import CodeReviewerAgent
 from app.agents.security_engineer_agent import SecurityEngineerAgent
 from app.agents.test_engineer_agent import TestEngineerAgent
 from app.agents.devops_engineer_agent import DevOpsEngineerAgent
 from app.database.models import AgentArtifact, AgentExecutionLog, Project, TaskExecution
+from app.services.file_service import FileService
 
 logger = logging.getLogger(__name__)
 
 
 class AgentOrchestrator:
+    """
+    Production-ready multi-agent workflow orchestrator for the 12 AI agents.
+    Executes agents sequentially in exact required order, isolates artifacts by task ID,
+    calculates live progress %, enforces cancellation checks, and generates a final workflow summary.
+    """
 
     AGENT_ORDER: List[str] = [
         "Project Manager",
         "Business Analyst",
         "Software Architect",
         "Database Engineer",
-        "UI/UX Designer",
-        "Frontend Developer",
-        "Backend Developer",
         "API Developer",
+        "UI/UX Designer",
+        "Backend Developer",
+        "Frontend Developer",
         "Code Reviewer",
         "Security Engineer",
         "Test Engineer",
@@ -46,10 +52,10 @@ class AgentOrchestrator:
         "Business Analyst": BusinessAnalystAgent,
         "Software Architect": SoftwareArchitectAgent,
         "Database Engineer": DatabaseEngineerAgent,
-        "UI/UX Designer": UIUXDesignerAgent,
-        "Frontend Developer": FrontendDeveloperAgent,
-        "Backend Developer": BackendDeveloperAgent,
         "API Developer": APIDeveloperAgent,
+        "UI/UX Designer": UIUXDesignerAgent,
+        "Backend Developer": BackendDeveloperAgent,
+        "Frontend Developer": FrontendDeveloperAgent,
         "Code Reviewer": CodeReviewerAgent,
         "Security Engineer": SecurityEngineerAgent,
         "Test Engineer": TestEngineerAgent,
@@ -70,15 +76,15 @@ class AgentOrchestrator:
         db: Session,
         task_execution_id: UUID,
         mock_mode: Optional[bool] = None
-    ) -> Dict[str, str]:
-        """
-        Executes the 12-agent sequential workflow for a TaskExecution record.
-        Integrates database tracking, context passing, artifact storage, and cancellation checks.
-        """
+    ) -> Dict[str, Any]:
         task = db.query(TaskExecution).filter(TaskExecution.id == task_execution_id).first()
         if not task:
             logger.error(f"TaskExecution {task_execution_id} not found.")
             return {"status": "error", "message": "Task not found"}
+
+        if task.status in ["completed", "failed", "cancelled"]:
+            logger.warning(f"TaskExecution {task_execution_id} is already in state '{task.status}'. Aborting duplicate run.")
+            return {"status": task.status, "message": f"Task already {task.status}"}
 
         project = db.query(Project).filter(Project.id == task.project_id).first()
         project_info = {
@@ -95,18 +101,28 @@ class AgentOrchestrator:
         )
 
         task.status = "running"
+        task.current_step = 0
+        task.total_steps = len(self.AGENT_ORDER)
+        task.percentage_completed = 0
+        task.agents_completed = 0
+        task.agents_failed = 0
+        task.artifacts_generated = 0
         db.commit()
 
-        logger.info(f"Starting execution for TaskExecution {task.id} (Project: {task.project_id})")
+        total_agents = len(self.AGENT_ORDER)
+        logger.info(f"Starting execution for Task {task.id} (Project: {task.project_id}) across {total_agents} agents.")
 
         for step_idx, agent_name in enumerate(self.AGENT_ORDER, start=1):
-            # 1. Check Cancellation Status
+            # 1. Real Cancellation Check
             db.refresh(task)
             if task.status == "cancelled":
-                logger.info(f"TaskExecution {task.id} was cancelled by user. Halting workflow.")
-                break
+                logger.info(f"Task {task.id} was cancelled by user before step {step_idx} ({agent_name}). Halting execution.")
+                return {"status": "cancelled", "message": "Workflow cancelled by user"}
 
+            # Update step progress
             task.current_agent = agent_name
+            task.current_step = step_idx
+            task.percentage_completed = int(((step_idx - 1) / total_agents) * 100)
             db.commit()
 
             # 2. Create AgentExecutionLog
@@ -123,42 +139,68 @@ class AgentOrchestrator:
             db.commit()
             db.refresh(log_entry)
 
-            # 3. Instantiate and run agent
+            # 3. Get selective context & run agent
+            selective_payload = context.get_selective_context(agent_name)
             agent_class = self.AGENT_CLASS_MAP[agent_name]
             agent_instance = agent_class(mock_mode=mock_mode)
 
             result = agent_instance.run(
                 user_prompt=context.user_prompt,
                 project_context=context.project_context,
-                previous_outputs=context.previous_outputs
+                previous_outputs=selective_payload
             )
 
-            # 4. Handle Execution Result
+            # 4. Process agent output & physical disk file writing
             if result.get("status") == "success":
                 log_entry.status = "completed"
                 log_entry.output_data = {
                     "summary": result.get("summary"),
+                    "decisions": result.get("decisions", []),
+                    "deliverables": result.get("deliverables", []),
                     "raw_text": result.get("raw_text"),
                     "artifacts_count": len(result.get("artifacts", []))
                 }
                 log_entry.completed_at = datetime.now(timezone.utc)
                 log_entry.retry_count = result.get("retry_count", 0)
 
-                # Store Artifacts
+                # Save generated files to disk and DB
                 for art in result.get("artifacts", []):
+                    rel_path, clean_cat, content_hash = FileService.save_file(
+                        project_id=task.project_id,
+                        task_id=task.id,
+                        category=art.get("category", "docs"),
+                        file_name=art.get("file_name", "file.txt"),
+                        content=art.get("content", "")
+                    )
+
+                    # Compute version
+                    version = db.query(AgentArtifact).filter(
+                        AgentArtifact.project_id == task.project_id,
+                        AgentArtifact.file_name == art.get("file_name")
+                    ).count() + 1
+
                     db_artifact = AgentArtifact(
+                        task_id=task.id,
                         task_execution_id=task.id,
                         project_id=task.project_id,
                         agent_name=agent_name,
-                        file_name=art["file_name"],
-                        file_type=art["file_type"],
-                        content=art["content"]
+                        file_name=art.get("file_name"),
+                        relative_path=rel_path,
+                        file_path=rel_path,
+                        category=clean_cat,
+                        file_type=art.get("file_type", "code"),
+                        content=art.get("content", ""),
+                        version=version,
+                        content_hash=content_hash
                     )
                     db.add(db_artifact)
+                    task.artifacts_generated += 1
 
                 context.add_agent_output(agent_name, result)
+                task.agents_completed += 1
+                task.percentage_completed = int((step_idx / total_agents) * 100)
                 db.commit()
-                logger.info(f"Step {step_idx}/{len(self.AGENT_ORDER)}: {agent_name} COMPLETED")
+                logger.info(f"Step {step_idx}/{total_agents}: {agent_name} COMPLETED. Artifacts created: {len(result.get('artifacts', []))}")
 
             else:
                 log_entry.status = "failed"
@@ -166,19 +208,21 @@ class AgentOrchestrator:
                 log_entry.completed_at = datetime.now(timezone.utc)
                 log_entry.retry_count = result.get("retry_count", 0)
 
+                task.agents_failed += 1
                 task.status = "failed"
                 task.completed_at = datetime.now(timezone.utc)
                 db.commit()
-                logger.error(f"Step {step_idx}/{len(self.AGENT_ORDER)}: {agent_name} FAILED. Workflow aborted.")
+                logger.error(f"Step {step_idx}/{total_agents}: {agent_name} FAILED. Workflow aborted.")
                 return {"status": "failed", "failed_agent": agent_name}
 
-        # 5. Finalize Task
+        # 5. Workflow Finalization & Synthesis
         db.refresh(task)
-        if task.status != "cancelled" and task.status != "failed":
+        if task.status not in ["cancelled", "failed"]:
             task.status = "completed"
             task.current_agent = None
+            task.percentage_completed = 100
             task.completed_at = datetime.now(timezone.utc)
             db.commit()
-            logger.info(f"TaskExecution {task.id} fully completed all 12 agents successfully.")
+            logger.info(f"Task {task.id} COMPLETED successfully across all 12 agents. Total artifacts: {task.artifacts_generated}")
 
-        return {"status": task.status}
+        return {"status": task.status}

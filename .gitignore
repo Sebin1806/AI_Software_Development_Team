@@ -18,26 +18,23 @@ venv/
 # ChromaDB
 chroma_db/
 
-# Uploads
+# Uploads & Generated Projects
 uploads/*
-
-# Generated Projects
+generated_projects/
 generated_projects/*
 
-# Python caches
+# Caches & Logs
 .pytest_cache/
 .mypy_cache/
+*.log
 
-# Node
+# Node & Frontend Build
 node_modules/
-
-# Build
 dist/
 build/
 
-# VS Code
+# IDE & OS
 .vscode/
-
-# OS
+.idea/
 .DS_Store
 Thumbs.db

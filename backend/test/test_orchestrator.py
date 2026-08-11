@@ -39,7 +39,14 @@ def test_orchestrator_full_workflow_mock():
     assert status_res.status_code == 200
     status_data = status_res.json()
     assert status_data["status"] == "completed"
+    assert status_data["percentage_completed"] == 100
+    assert status_data["total_steps"] == 12
     assert len(status_data["logs"]) == 12
+    # Verify API Developer ran at step 5
+    assert status_data["logs"][4]["agent_name"] == "API Developer"
+    assert status_data["logs"][5]["agent_name"] == "UI/UX Designer"
+    assert status_data["logs"][6]["agent_name"] == "Backend Developer"
+    assert status_data["logs"][7]["agent_name"] == "Frontend Developer"
 
     # 3. Check Results API
     results_res = client.get(f"/api/orchestrator/results/{task_id}", headers=headers)
@@ -47,6 +54,7 @@ def test_orchestrator_full_workflow_mock():
     results_data = results_res.json()
     assert results_data["status"] == "completed"
     assert results_data["total_artifacts"] > 0
+    assert "workflow_summary" in results_data
 
 
 def test_task_cancellation_flow():
