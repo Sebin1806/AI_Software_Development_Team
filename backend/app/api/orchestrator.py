@@ -274,3 +274,97 @@ def cancel_task(
     db.commit()
 
     return {"task_id": task.id, "status": "cancelled", "message": "Workflow cancellation requested successfully"}
+
+
+@router.get(
+    "/stream/{task_id}"
+)
+async def stream_task_progress(
+    task_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Server-Sent Events (SSE) endpoint streaming real-time workflow progress updates to the frontend.
+    """
+    import asyncio
+    import json
+    from fastapi.responses import StreamingResponse
+
+    task = db.query(TaskExecution).filter(
+        TaskExecution.id == task_id,
+        TaskExecution.user_id == current_user.id
+    ).first()
+
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task execution not found"
+        )
+
+    async def event_generator():
+        last_step = -1
+        last_status = None
+        while True:
+            # Refresh DB session inside stream loop
+            db.refresh(task)
+            payload = {
+                "task_id": str(task.id),
+                "project_id": str(task.project_id),
+                "status": task.status,
+                "current_step": task.current_step,
+                "total_steps": task.total_steps,
+                "percentage_completed": task.percentage_completed,
+                "current_agent": task.current_agent,
+                "agents_completed": task.agents_completed,
+                "artifacts_generated": task.artifacts_generated
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+
+            if task.status in ["completed", "failed", "cancelled"]:
+                break
+
+            await asyncio.sleep(1.5)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get(
+    "/results/{task_id}/download-zip"
+)
+def download_task_zip(
+    task_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Bundles all task artifacts into a downloadable ZIP archive.
+    """
+    from fastapi.responses import Response
+    from app.services.file_service import FileService
+
+    task = db.query(TaskExecution).filter(
+        TaskExecution.id == task_id,
+        TaskExecution.user_id == current_user.id
+    ).first()
+
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task execution not found"
+        )
+
+    try:
+        zip_buffer = FileService.create_project_zip(task.project_id, task.id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="task_{str(task_id)[:8]}_project.zip"'
+    }
+
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers=headers
+    )

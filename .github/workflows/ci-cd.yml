@@ -1,0 +1,72 @@
+name: AI Software Development Team CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: username
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: ai_software_team
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run Alembic Database Migrations
+        env:
+          DATABASE_URL: postgresql://username:password@localhost:5432/ai_software_team
+        run: |
+          cd backend
+          python -m alembic upgrade head
+
+      - name: Run Pytest Suite
+        env:
+          DATABASE_URL: postgresql://username:password@localhost:5432/ai_software_team
+          LLM_MOCK_MODE: "true"
+          SECRET_KEY: testsecretkey
+        run: |
+          cd backend
+          python -m pytest test/ -v
+
+  build-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+
+      - name: Install Frontend Dependencies & Build
+        run: |
+          cd frontend
+          npm install
+          npm run build

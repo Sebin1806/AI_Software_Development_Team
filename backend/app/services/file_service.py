@@ -1,9 +1,11 @@
 import hashlib
+import io
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Optional, Tuple
 from uuid import UUID
+import zipfile
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +14,9 @@ BASE_GENERATED_DIR = Path("generated_projects").resolve()
 
 class FileService:
     """
-    Physical disk file generation and path safety service.
-    Ensures generated files are stored isolated under generated_projects/<project_id>/<task_id>/<category>/<file_name>.
-    Enforces strict path sanitization to prevent directory traversal attacks (../).
+    Physical disk file generation, path safety, and ZIP archiving service.
+    Preserves exact nested file directory structure (e.g., frontend/src/App.tsx, backend/app/main.py)
+    safely isolated under generated_projects/<project_id>/<task_id>/.
     """
 
     CATEGORY_MAP = {
@@ -33,12 +35,24 @@ class FileService:
     }
 
     @classmethod
-    def resolve_category(cls, category: str, file_name: str) -> str:
+    def resolve_category(cls, category: str, file_path: str) -> str:
         cat_lower = category.lower().strip() if category else ""
         if cat_lower in cls.CATEGORY_MAP:
             return cls.CATEGORY_MAP[cat_lower]
 
-        ext = file_name.split(".")[-1].lower() if "." in file_name else ""
+        path_lower = file_path.lower()
+        if path_lower.startswith("frontend/") or "src/" in path_lower:
+            return "frontend"
+        if path_lower.startswith("backend/") or "app/" in path_lower:
+            return "backend"
+        if path_lower.startswith("database/") or "migrations/" in path_lower:
+            return "database"
+        if path_lower.startswith("tests/") or "test_" in path_lower:
+            return "tests"
+        if path_lower.startswith("deployment/") or "docker" in path_lower or "k8s" in path_lower:
+            return "deployment"
+
+        ext = file_path.split(".")[-1].lower() if "." in file_path else ""
         ext_category = {
             "tsx": "frontend", "jsx": "frontend", "js": "frontend", "html": "frontend", "css": "frontend",
             "py": "backend",
@@ -61,39 +75,68 @@ class FileService:
         project_id: UUID,
         task_id: UUID,
         category: str,
-        file_name: str,
+        file_path: str,
         content: str
-    ) -> Tuple[str, str, str]:
+    ) -> Tuple[str, str, str, str]:
         """
-        Saves a generated file to disk safely.
-        Returns Tuple[relative_path, category, content_hash].
+        Saves a generated file preserving nested directory paths.
+        Returns Tuple[relative_path, clean_filename, clean_category, content_hash].
         """
-        clean_category = cls.resolve_category(category, file_name)
+        clean_category = cls.resolve_category(category, file_path)
         task_dir = cls.get_safe_task_dir(project_id, task_id)
-        
-        # Sanitize file_name to prevent directory traversal
-        clean_filename = os.path.basename(file_name)
-        if not clean_filename or clean_filename in (".", ".."):
-            clean_filename = f"artifact_{hashlib.md5(content.encode()).hexdigest()[:8]}.txt"
 
-        category_dir = (task_dir / clean_category).resolve()
-        if not str(category_dir).startswith(str(task_dir)):
-            raise ValueError(f"Unsafe path traversal attempt in category: {clean_category}")
+        # Normalize relative path to prevent escaping root task_dir
+        clean_rel_path = os.path.normpath(file_path).replace("\\", "/")
+        while clean_rel_path.startswith("../") or clean_rel_path.startswith("./"):
+            clean_rel_path = clean_rel_path.lstrip("./").lstrip("../")
 
-        category_dir.mkdir(parents=True, exist_ok=True)
+        if not clean_rel_path:
+            clean_rel_path = f"file_{hashlib.md5(content.encode()).hexdigest()[:8]}.txt"
 
-        full_file_path = (category_dir / clean_filename).resolve()
-        if not str(full_file_path).startswith(str(category_dir)):
-            raise ValueError(f"Unsafe path traversal attempt in filename: {clean_filename}")
+        clean_filename = os.path.basename(clean_rel_path)
 
-        # Compute content hash
+        # Build absolute path on disk
+        full_file_path = (task_dir / clean_rel_path).resolve()
+        if not str(full_file_path).startswith(str(task_dir)):
+            raise ValueError(f"Unsafe path traversal attempt blocked for path: {file_path}")
+
+        full_file_path.parent.mkdir(parents=True, exist_ok=True)
+
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-        # Write content safely
         with open(full_file_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-        relative_path = f"{project_id}/{task_id}/{clean_category}/{clean_filename}"
-        logger.info(f"Saved physical artifact: {relative_path} ({len(content)} bytes)")
+        stored_relative_path = f"{project_id}/{task_id}/{clean_rel_path}"
+        logger.info(f"Saved nested artifact: {stored_relative_path} ({len(content)} bytes)")
 
-        return relative_path, clean_category, content_hash
+        return clean_rel_path, clean_filename, clean_category, content_hash
+
+    @classmethod
+    def create_project_zip(cls, project_id: UUID, task_id: Optional[UUID] = None) -> io.BytesIO:
+        """
+        Bundles physical files under generated_projects/<project_id>/<task_id>/ into a downloadable ZIP archive.
+        """
+        proj_dir = (BASE_GENERATED_DIR / str(project_id)).resolve()
+        if not str(proj_dir).startswith(str(BASE_GENERATED_DIR)) or not proj_dir.exists():
+            raise FileNotFoundError(f"No generated files found for project {project_id}")
+
+        if task_id:
+            search_dir = (proj_dir / str(task_id)).resolve()
+        else:
+            # Pick latest task directory
+            subdirs = [d for d in proj_dir.iterdir() if d.is_dir()]
+            if not subdirs:
+                raise FileNotFoundError(f"No task outputs found for project {project_id}")
+            search_dir = sorted(subdirs, key=lambda d: d.stat().st_mtime, reverse=True)[0]
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for root, _, files in os.walk(search_dir):
+                for file in files:
+                    abs_file = Path(root) / file
+                    rel_arc_path = abs_file.relative_to(search_dir)
+                    zip_file.write(abs_file, arcname=str(rel_arc_path))
+
+        zip_buffer.seek(0)
+        return zip_buffer

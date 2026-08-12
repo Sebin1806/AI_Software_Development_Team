@@ -21,6 +21,7 @@ from app.agents.test_engineer_agent import TestEngineerAgent
 from app.agents.devops_engineer_agent import DevOpsEngineerAgent
 from app.database.models import AgentArtifact, AgentExecutionLog, Project, TaskExecution
 from app.services.file_service import FileService
+from app.services.validation_service import ValidationService
 
 logger = logging.getLogger(__name__)
 
@@ -163,20 +164,34 @@ class AgentOrchestrator:
                 log_entry.completed_at = datetime.now(timezone.utc)
                 log_entry.retry_count = result.get("retry_count", 0)
 
-                # Save generated files to disk and DB
+                # Save generated files to disk and DB with syntax validation and security scanning
                 for art in result.get("artifacts", []):
-                    rel_path, clean_cat, content_hash = FileService.save_file(
+                    raw_path = art.get("relative_path") or art.get("file_name") or "file.txt"
+                    content = art.get("content", "")
+
+                    # Syntax validation & security scan
+                    val_res = ValidationService.validate_code(raw_path, content)
+                    if not val_res["valid"]:
+                        for err in val_res["errors"]:
+                            result.setdefault("decisions", []).append(f"AST SYNTAX ERROR: {err}")
+
+                    sec_risks = ValidationService.scan_security_risks(raw_path, content)
+                    if sec_risks:
+                        for risk in sec_risks:
+                            result.setdefault("decisions", []).append(risk)
+
+                    rel_path, clean_fname, clean_cat, content_hash = FileService.save_file(
                         project_id=task.project_id,
                         task_id=task.id,
                         category=art.get("category", "docs"),
-                        file_name=art.get("file_name", "file.txt"),
-                        content=art.get("content", "")
+                        file_path=raw_path,
+                        content=content
                     )
 
                     # Compute version
                     version = db.query(AgentArtifact).filter(
                         AgentArtifact.project_id == task.project_id,
-                        AgentArtifact.file_name == art.get("file_name")
+                        AgentArtifact.file_name == clean_fname
                     ).count() + 1
 
                     db_artifact = AgentArtifact(
@@ -184,12 +199,12 @@ class AgentOrchestrator:
                         task_execution_id=task.id,
                         project_id=task.project_id,
                         agent_name=agent_name,
-                        file_name=art.get("file_name"),
+                        file_name=clean_fname,
                         relative_path=rel_path,
                         file_path=rel_path,
                         category=clean_cat,
                         file_type=art.get("file_type", "code"),
-                        content=art.get("content", ""),
+                        content=content,
                         version=version,
                         content_hash=content_hash
                     )

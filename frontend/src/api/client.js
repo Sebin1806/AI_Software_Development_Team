@@ -48,8 +48,11 @@ export const api = {
   getTaskResults: (taskId) => request(`/orchestrator/results/${taskId}`),
   cancelTask: (taskId) => request(`/orchestrator/cancel/${taskId}`, { method: 'POST' }),
 
-  // Artifacts
+  // Artifacts & ZIP Exports
   getProjectArtifacts: (projectId) => request(`/projects/${projectId}/artifacts`),
   getArtifact: (projectId, artifactId) => request(`/projects/${projectId}/artifacts/${artifactId}`),
-  getArtifactDownloadUrl: (projectId, artifactId) => `/api/projects/${projectId}/artifacts/${artifactId}/download`
+  getArtifactDownloadUrl: (projectId, artifactId) => `/api/projects/${projectId}/artifacts/${artifactId}/download`,
+  getProjectZipUrl: (projectId) => `/api/projects/${projectId}/download-zip`,
+  getTaskZipUrl: (taskId) => `/api/orchestrator/results/${taskId}/download-zip`,
+  getTaskStreamUrl: (taskId) => `/api/orchestrator/stream/${taskId}`
 };

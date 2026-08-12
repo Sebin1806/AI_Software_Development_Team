@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../api/client';
+import { api, getAuthHeader } from '../api/client';
 
 export default function ProjectDetailView({ project, onBack }) {
   const [userPrompt, setUserPrompt] = useState('');
@@ -13,10 +13,42 @@ export default function ProjectDetailView({ project, onBack }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Poll status while task is running or pending
+  // Real-time SSE Progress Streaming & Status Polling
   useEffect(() => {
+    let eventSource;
     let timer;
+
     if (activeTask && (taskStatus?.status === 'pending' || taskStatus?.status === 'running')) {
+      // 1. EventSource SSE streaming connection
+      try {
+        const streamUrl = api.getTaskStreamUrl(activeTask);
+        eventSource = new EventSource(streamUrl);
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            setTaskStatus(prev => ({
+              ...prev,
+              ...data
+            }));
+
+            if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+              eventSource.close();
+              fetchTaskResults(activeTask);
+            }
+          } catch (e) {
+            console.error("SSE parse error", e);
+          }
+        };
+
+        eventSource.onerror = () => {
+          eventSource.close();
+        };
+      } catch (err) {
+        console.error("SSE connection error", err);
+      }
+
+      // 2. Backup Polling every 3 seconds
       timer = setInterval(async () => {
         try {
           const statusData = await api.getTaskStatus(activeTask);
@@ -24,14 +56,19 @@ export default function ProjectDetailView({ project, onBack }) {
 
           if (statusData.status === 'completed' || statusData.status === 'failed' || statusData.status === 'cancelled') {
             clearInterval(timer);
+            if (eventSource) eventSource.close();
             fetchTaskResults(activeTask);
           }
         } catch (err) {
           console.error("Status polling error:", err);
         }
-      }, 2000);
+      }, 3000);
     }
-    return () => clearInterval(timer);
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (timer) clearInterval(timer);
+    };
   }, [activeTask, taskStatus?.status]);
 
   const fetchTaskResults = async (taskId) => {
@@ -98,6 +135,16 @@ export default function ProjectDetailView({ project, onBack }) {
           <h2>{project.name}</h2>
           <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.25rem' }}>{project.description || 'No description provided.'}</p>
         </div>
+        {results && (
+          <a
+            className="btn btn-primary"
+            href={api.getProjectZipUrl(project.id)}
+            download
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            📦 Download Complete Project ZIP
+          </a>
+        )}
       </div>
 
       {/* Start Task Form */}
@@ -112,11 +159,11 @@ export default function ProjectDetailView({ project, onBack }) {
                 required
                 value={userPrompt}
                 onChange={e => setUserPrompt(e.target.value)}
-                placeholder="Describe the application requirements in detail (e.g. Build an e-commerce platform with product catalog, cart, user auth, checkout, and order history)..."
+                placeholder="Describe the application requirements in detail (e.g. Build a SaaS task management system with user authentication, PostgreSQL database, REST endpoints, React frontend, and Docker deployment)..."
               />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Submitting Requirement...' : 'Start 12-Agent Development Workflow'}
+              {loading ? 'Submitting Requirement...' : 'Start 12-Agent Autonomous Workflow'}
             </button>
           </form>
         </div>
@@ -127,7 +174,7 @@ export default function ProjectDetailView({ project, onBack }) {
         <div className="glass-panel" style={{ padding: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <div>
-              <h3>Workflow Status</h3>
+              <h3>Workflow Progress (Real-Time SSE)</h3>
               <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', alignItems: 'center' }}>
                 <span className={`badge badge-${taskStatus.status}`}>{taskStatus.status}</span>
                 <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
@@ -135,16 +182,23 @@ export default function ProjectDetailView({ project, onBack }) {
                 </span>
                 {taskStatus.current_agent && (
                   <span style={{ fontSize: '0.85rem', color: '#818cf8', fontWeight: 600 }}>
-                    Active: {taskStatus.current_agent}
+                    Active Agent: {taskStatus.current_agent}
                   </span>
                 )}
               </div>
             </div>
-            {taskStatus.status === 'running' && (
-              <button className="btn btn-danger" onClick={handleCancelTask}>
-                Cancel Task
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              {taskStatus.status === 'running' && (
+                <button className="btn btn-danger" onClick={handleCancelTask}>
+                  Cancel Workflow
+                </button>
+              )}
+              {activeTask && (
+                <a className="btn btn-secondary" href={api.getTaskZipUrl(activeTask)} download style={{ textDecoration: 'none' }}>
+                  ⚡ Download Task ZIP
+                </a>
+              )}
+            </div>
           </div>
 
           <div className="progress-bar-container">
@@ -155,7 +209,7 @@ export default function ProjectDetailView({ project, onBack }) {
           </div>
 
           {/* Timeline Table */}
-          <h4 style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>Agent Execution Log</h4>
+          <h4 style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>12-Agent Execution Timeline</h4>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
@@ -164,7 +218,7 @@ export default function ProjectDetailView({ project, onBack }) {
                   <th style={{ padding: '0.5rem' }}>Agent</th>
                   <th style={{ padding: '0.5rem' }}>Status</th>
                   <th style={{ padding: '0.5rem' }}>Retries</th>
-                  <th style={{ padding: '0.5rem' }}>Error Details</th>
+                  <th style={{ padding: '0.5rem' }}>Error / Validation Log</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,18 +242,18 @@ export default function ProjectDetailView({ project, onBack }) {
       {/* Artifacts & Results Section */}
       {results && (
         <div className="glass-panel" style={{ padding: '1.5rem' }}>
-          <h3 style={{ marginBottom: '1rem' }}>📦 Project Deliverables & Artifacts</h3>
+          <h3 style={{ marginBottom: '1rem' }}>📦 Generated Project Architecture & Files</h3>
 
           {/* Tabs */}
           <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>
             <button className={`btn ${activeTab === 'artifacts' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('artifacts')}>
-              Generated Files ({artifacts.length})
+              Nested Code Files ({artifacts.length})
             </button>
             <button className={`btn ${activeTab === 'review' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('review')}>
-              Code Review Report
+              AST Code Review Report
             </button>
             <button className={`btn ${activeTab === 'security' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('security')}>
-              Security Audit Report
+              OWASP Security Audit
             </button>
           </div>
 
@@ -229,7 +283,7 @@ export default function ProjectDetailView({ project, onBack }) {
                 ))}
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '1rem', minHeight: '400px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1rem', minHeight: '420px' }}>
                 {/* File List Sidebar */}
                 <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '0.75rem', overflowY: 'auto' }}>
                   {filteredArtifacts.map((art) => (
@@ -246,8 +300,12 @@ export default function ProjectDetailView({ project, onBack }) {
                         borderLeft: selectedArtifact?.id === art.id ? '3px solid var(--primary)' : '3px solid transparent'
                       }}
                     >
-                      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>{art.file_name}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{art.agent_name} • v{art.version}</div>
+                      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        📂 {art.relative_path || art.file_name}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.2rem' }}>
+                        {art.agent_name} • v{art.version}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -273,13 +331,13 @@ export default function ProjectDetailView({ project, onBack }) {
                         </a>
                       </div>
                     </div>
-                    <pre className="code-block" style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                    <pre className="code-block" style={{ maxHeight: '520px', overflowY: 'auto' }}>
                       <code>{selectedArtifact.content}</code>
                     </pre>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
-                    Select an artifact to view code
+                    Select a generated artifact to preview source code
                   </div>
                 )}
               </div>
@@ -289,7 +347,7 @@ export default function ProjectDetailView({ project, onBack }) {
           {/* Tab 2: Code Review Findings */}
           {activeTab === 'review' && (
             <div>
-              <h4>Code Review Decisions & Audit Findings</h4>
+              <h4>AST Code Review & Architecture Audit</h4>
               <ul style={{ marginTop: '0.75rem', paddingLeft: '1.25rem', color: '#cbd5e1', fontSize: '0.9rem' }}>
                 {(results.workflow_summary?.code_review_findings || []).map((finding, idx) => (
                   <li key={idx} style={{ marginBottom: '0.5rem' }}>{finding}</li>
@@ -301,7 +359,7 @@ export default function ProjectDetailView({ project, onBack }) {
           {/* Tab 3: Security Audit Report */}
           {activeTab === 'security' && (
             <div>
-              <h4>Security Engineering Audit</h4>
+              <h4>OWASP Security Engineering Audit</h4>
               <ul style={{ marginTop: '0.75rem', paddingLeft: '1.25rem', color: '#cbd5e1', fontSize: '0.9rem' }}>
                 {(results.workflow_summary?.security_findings || []).map((finding, idx) => (
                   <li key={idx} style={{ marginBottom: '0.5rem' }}>{finding}</li>

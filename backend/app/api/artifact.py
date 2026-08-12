@@ -143,3 +143,45 @@ def download_artifact(
         media_type=media_type,
         headers=headers
     )
+
+
+@router.get(
+    "/projects/{project_id}/download-zip"
+)
+def download_project_zip(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Bundles all project artifacts into a downloadable ZIP archive.
+    """
+    from app.services.file_service import FileService
+
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found or unauthorized"
+        )
+
+    try:
+        zip_buffer = FileService.create_project_zip(project_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    safe_name = project.name.lower().replace(" ", "_")
+    headers = {
+        "Content-Disposition": f'attachment; filename="project_{safe_name}.zip"'
+    }
+
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers=headers
+    )
+
