@@ -8,6 +8,41 @@ All generated project artifacts are safely saved on physical disk under `generat
 
 ---
 
+## ⚡ Quick Start Guide (Windows)
+
+### Step 1: Run Automated Setup (One Time)
+Double-click `setup.bat` or run in Command Prompt / PowerShell:
+```cmd
+setup.bat
+```
+This script automatically:
+- Checks Python 3.11+ installation
+- Creates Python virtual environment (`backend\venv`)
+- Installs backend Python dependencies
+- Installs frontend npm packages (`frontend\node_modules`)
+- Configures database & runs Alembic migrations
+- Checks Ollama AI service status
+
+### Step 2: Start the Application
+Double-click `start.bat` or run in Command Prompt / PowerShell:
+```cmd
+start.bat
+```
+This will launch both the FastAPI Backend and React Frontend in separate windows.
+
+### Step 3: Open the Web Application
+Open your browser and navigate to:
+- **Frontend Web App**: `http://localhost:5173`
+- **Backend Swagger API Docs**: `http://localhost:8000/docs`
+
+### Step 4: Stop Application Servers
+Run `stop.bat` to stop all running application servers cleanly:
+```cmd
+stop.bat
+```
+
+---
+
 ## 12-Agent Workflow Execution Order
 
 ```
@@ -73,48 +108,20 @@ generated_projects/
 
 ---
 
-## API Documentation & OpenAPI Spec
-
-### Authentication
-- `POST /api/auth/register` - Register user account
-- `POST /api/auth/login` - Obtain JWT access token
-- `GET /api/auth/profile` - Get current authenticated profile
-
-### Projects
-- `POST /api/projects` - Create software project
-- `GET /api/projects` - List user projects
-- `GET /api/projects/{project_id}` - Get project details
-- `DELETE /api/projects/{project_id}` - Delete project
-
-### Workflow Orchestrator
-- `GET /api/orchestrator/order` - Get 12-agent execution order
-- `POST /api/orchestrator/start` - Launch background development workflow
-- `GET /api/orchestrator/status/{task_id}` - Poll live status, current step, %, and logs
-- `GET /api/orchestrator/results/{task_id}` - Get complete structured results summary
-- `POST /api/orchestrator/cancel/{task_id}` - Request workflow cancellation
-
-### Artifacts (JWT Protected)
-- `GET /api/projects/{project_id}/artifacts` - List project artifacts
-- `GET /api/orchestrator/results/{task_id}/artifacts` - List task artifacts
-- `GET /api/projects/{project_id}/artifacts/{artifact_id}` - View artifact details
-- `GET /api/projects/{project_id}/artifacts/{artifact_id}/download` - Download file
-
----
-
-## Installation & Setup Instructions
+## Manual Setup & CLI Instructions
 
 ### 1. Environment Setup
-Copy `.env.example` to `.env` inside the `backend` folder:
+Copy `.env.example` to `backend/.env`:
 ```bash
-cp backend/.env.example backend/.env
+cp .env.example backend/.env
 ```
 
-### 2. Database Migration (Alembic)
-Ensure PostgreSQL is running and database `ai_software_team` is created:
+### 2. Database Migrations (Alembic)
+Ensure PostgreSQL is running and database `ai_software_team` exists:
 ```bash
 cd backend
 $env:PYTHONPATH="."
-venv\Scripts\alembic.exe upgrade head
+venv\Scripts\python.exe -m alembic upgrade head
 ```
 
 ### 3. Ollama & Llama 3.1 Setup
@@ -123,25 +130,9 @@ Install Ollama and pull the Llama 3.1 model:
 ollama run llama3.1
 ```
 
-### 4. Running the Backend Server
+### 4. Running Automated Pytest Suite
 ```bash
 cd backend
 $env:PYTHONPATH="."
-venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
-```
-FastAPI Swagger documentation will be available at: `http://127.0.0.1:8000/docs`
-
-### 5. Running the Frontend Application
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Open `http://localhost:5173` in your browser.
-
-### 6. Running Automated Pytest Suite
-```bash
-cd backend
-$env:PYTHONPATH="."
-venv\Scripts\python.exe -m pytest test/ -v
+venv\Scripts\pytest.exe test/ -v
 ```

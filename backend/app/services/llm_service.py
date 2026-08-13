@@ -57,5 +57,12 @@ class LLMService:
             return response.message.content
 
         except Exception as e:
-            logger.error(f"Error calling Ollama service: {str(e)}")
-            raise RuntimeError(f"Ollama LLM generation failed: {str(e)}") from e
+            err_msg = str(e)
+            logger.error(f"Error calling Ollama service: {err_msg}")
+            friendly_msg = (
+                f"Ollama LLM Generation Failed: {err_msg}\n"
+                f"-> Ensure Ollama service is running at '{settings.OLLAMA_BASE_URL}'.\n"
+                f"-> Ensure required model '{model_name}' is installed by running: ollama run {model_name}\n"
+                f"-> Alternatively, set LLM_MOCK_MODE=true in backend/.env to run in test mock mode."
+            )
+            raise RuntimeError(friendly_msg) from e

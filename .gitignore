@@ -1,4 +1,4 @@
-# Python
+# Python Virtual Environments & Caches
 __pycache__/
 *.py[cod]
 *.pyo
@@ -6,34 +6,39 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+backend/venv/
 
-# Environment
+# Environment Configuration Files
 .env
 .env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
 
-# Database
+# Database & Vectors
 *.db
 *.sqlite3
-
-# ChromaDB
 chroma_db/
 
-# Uploads & Generated Projects
+# Uploads & Physical Artifact Output Directories
 uploads/*
 generated_projects/
 generated_projects/*
 
-# Caches & Logs
+# Caches & Test Logs
 .pytest_cache/
 .mypy_cache/
 *.log
 
-# Node & Frontend Build
+# Node.js & Frontend Build Outputs
 node_modules/
+frontend/node_modules/
 dist/
+frontend/dist/
 build/
 
-# IDE & OS
+# IDE & Operating System Files
 .vscode/
 .idea/
 .DS_Store
