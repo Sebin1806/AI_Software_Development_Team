@@ -13,7 +13,7 @@ def load_env():
     env_file = backend_dir / ".env"
     if not env_file.exists():
         env_file = Path(__file__).resolve().parent.parent / ".env"
-    
+
     if env_file.exists():
         with open(env_file, "r", encoding="utf-8") as f:
             for line in f:
@@ -27,61 +27,63 @@ def check_postgres():
     print("\n[SETUP] Checking PostgreSQL Database Connection...")
     db_url = os.environ.get("DATABASE_URL", "")
     if not db_url:
-        print("[ERROR] DATABASE_URL is missing in backend/.env")
+        print("[ERROR] DATABASE_URL is missing in backend/.env configuration!")
+        print("-> Please specify DATABASE_URL in backend/.env (e.g. postgresql://postgres:postgres@localhost:5432/ai_software_team)")
         return False
 
     try:
         import psycopg2
         from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
-        # Parse DATABASE_URL
-        # format: postgresql://user:password@host:port/dbname
-        clean_url = db_url.replace("postgresql://", "")
-        auth_host, db_name = clean_url.split("/", 1)
-        if "?" in db_name:
-            db_name = db_name.split("?")[0]
-        
-        user_pass, host_port = auth_host.split("@", 1)
-        user, password = user_pass.split(":", 1)
-        
-        if ":" in host_port:
-            host, port = host_port.split(":", 1)
-        else:
-            host, port = host_port, "5432"
+        # Parse DATABASE_URL using urllib.parse
+        parsed = urllib.parse.urlparse(db_url)
+        user = parsed.username or "postgres"
+        password = parsed.password or ""
+        host = parsed.hostname or "localhost"
+        port = str(parsed.port or 5432)
+        db_name = parsed.path.lstrip("/") or "ai_software_team"
 
-        # Try connecting to target database
+        # 1. Attempt connection directly to target database
         try:
             conn = psycopg2.connect(
                 dbname=db_name, user=user, password=password, host=host, port=port, connect_timeout=3
             )
             conn.close()
-            print(f"[SUCCESS] Connected to PostgreSQL database '{db_name}'.")
+            print(f"[SUCCESS] Successfully connected to PostgreSQL database '{db_name}' on {host}:{port}.")
             return True
-        except psycopg2.OperationalError:
-            # Target database might not exist, attempt to connect to 'postgres' DB and create target database
-            print(f"[INFO] Target database '{db_name}' does not exist yet. Attempting to create it...")
-            try:
-                conn = psycopg2.connect(
-                    dbname="postgres", user=user, password=password, host=host, port=port, connect_timeout=3
-                )
-                conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-                cursor = conn.cursor()
-                cursor.execute(f'CREATE DATABASE "{db_name}";')
-                cursor.close()
-                conn.close()
-                print(f"[SUCCESS] Database '{db_name}' created successfully!")
-                return True
-            except Exception as create_err:
-                print(f"[WARNING] Could not automatically create database '{db_name}': {create_err}")
-                print(f"[INFO] Please ensure database '{db_name}' is created manually in PostgreSQL.")
+        except psycopg2.OperationalError as op_err:
+            err_str = str(op_err)
+            # If target database does not exist, attempt to connect to 'postgres' system DB and create target database
+            if "does not exist" in err_str:
+                print(f"[INFO] Database '{db_name}' does not exist yet. Attempting automatic creation...")
+                try:
+                    conn = psycopg2.connect(
+                        dbname="postgres", user=user, password=password, host=host, port=port, connect_timeout=3
+                    )
+                    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+                    cursor = conn.cursor()
+                    cursor.execute(f'CREATE DATABASE "{db_name}";')
+                    cursor.close()
+                    conn.close()
+                    print(f"[SUCCESS] Database '{db_name}' created successfully on PostgreSQL server.")
+                    return True
+                except Exception as create_err:
+                    print(f"[WARNING] Automatic creation of database '{db_name}' failed: {create_err}")
+                    print(f"[INFO] Please manually create database '{db_name}' in PostgreSQL.")
+                    return False
+            else:
+                print(f"[ERROR] Could not connect to PostgreSQL server at {host}:{port}.")
+                print(f"Error details: {err_str.strip()}")
+                print("-> Please verify PostgreSQL is installed and running.")
+                print("-> Verify your username, password, host, and port in backend/.env match your local PostgreSQL installation.")
                 return False
 
     except ImportError:
-        print("[WARNING] psycopg2 module not available in Python environment.")
+        print("[WARNING] psycopg2 module is not available in Python environment.")
         return False
     except Exception as e:
-        print(f"[WARNING] Could not connect to PostgreSQL: {e}")
-        print("[INFO] Please verify PostgreSQL is running and check credentials in backend/.env")
+        print(f"[ERROR] Connection check failed: {e}")
+        print("-> Please verify PostgreSQL service status and backend/.env credentials.")
         return False
 
 def check_ollama():
@@ -91,7 +93,7 @@ def check_ollama():
     mock_mode = os.environ.get("LLM_MOCK_MODE", "false").lower() in ("true", "1")
 
     if mock_mode:
-        print("[INFO] LLM_MOCK_MODE is enabled in backend/.env. AI agents will run in test mock mode.")
+        print("[INFO] LLM_MOCK_MODE is enabled in backend/.env. AI agents will execute in mock testing mode.")
         return
 
     try:
@@ -101,13 +103,13 @@ def check_ollama():
                 data = json.loads(resp.read().decode("utf-8"))
                 models = [m.get("name", "") for m in data.get("models", [])]
                 print(f"[SUCCESS] Ollama service is active at {ollama_url}.")
-                
+
                 has_model = any(model_name in m for m in models)
                 if has_model:
-                    print(f"[SUCCESS] Required model '{model_name}' is installed and ready.")
+                    print(f"[SUCCESS] Required LLM model '{model_name}' is installed and ready.")
                 else:
-                    print(f"[WARNING] Ollama is active, but model '{model_name}' was not found.")
-                    print(f"-> Run command: ollama run {model_name}")
+                    print(f"[WARNING] Ollama is active, but model '{model_name}' was not found in installed models.")
+                    print(f"-> Run command in terminal: ollama run {model_name}")
                     print("-> Or set LLM_MOCK_MODE=true in backend/.env to test without LLM.")
                 return
     except Exception:
