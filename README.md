@@ -17,23 +17,27 @@ setup.bat
 ```
 This script automatically:
 - Checks Python 3.11+ installation
+- Creates `backend\.env` from `backend\.env.example` if missing
 - Creates Python virtual environment (`backend\venv`)
 - Installs backend Python dependencies
 - Installs frontend npm packages (`frontend\node_modules`)
-- Configures database & runs Alembic migrations
+- Checks/creates PostgreSQL database & runs Alembic migrations
 - Checks Ollama AI service status
+
+> **Note on PostgreSQL Password**: By default, `backend\.env` is created with `DATABASE_URL=postgresql://postgres:YOUR_POSTGRES_PASSWORD@localhost:5432/ai_software_team`. If your local PostgreSQL password is not `postgres`, edit `backend\.env` to update your password.
 
 ### Step 2: Start the Application
 Double-click `start.bat` or run in Command Prompt / PowerShell:
 ```cmd
 start.bat
 ```
-This will launch both the FastAPI Backend and React Frontend in separate windows.
+This will launch both the FastAPI Backend and React Frontend in separate windows without requiring manual virtual environment activation.
 
 ### Step 3: Open the Web Application
 Open your browser and navigate to:
 - **Frontend Web App**: `http://localhost:5173`
-- **Backend Swagger API Docs**: `http://localhost:8000/docs`
+- **Backend API Docs (Swagger)**: `http://localhost:8000/docs`
+- **Health Check Endpoint**: `http://localhost:8000/health`
 
 ### Step 4: Stop Application Servers
 Run `stop.bat` to stop all running application servers cleanly:
@@ -111,9 +115,9 @@ generated_projects/
 ## Manual Setup & CLI Instructions
 
 ### 1. Environment Setup
-Copy `.env.example` to `backend/.env`:
+Copy `backend/.env.example` to `backend/.env`:
 ```bash
-cp .env.example backend/.env
+cp backend/.env.example backend/.env
 ```
 
 ### 2. Database Migrations (Alembic)
