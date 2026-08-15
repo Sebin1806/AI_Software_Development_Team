@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 import urllib.request
 import urllib.parse
 import json
@@ -7,15 +8,30 @@ from pathlib import Path
 
 # Add backend directory to path
 backend_dir = Path(__file__).resolve().parent.parent / "backend"
+root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 
-def load_env():
-    env_file = backend_dir / ".env"
-    if not env_file.exists():
-        env_file = Path(__file__).resolve().parent.parent / ".env"
+def ensure_env_file():
+    backend_env = backend_dir / ".env"
+    backend_env_example = backend_dir / ".env.example"
+    root_env_example = root_dir / ".env.example"
 
-    if env_file.exists():
-        with open(env_file, "r", encoding="utf-8") as f:
+    if not backend_env.exists():
+        if backend_env_example.exists():
+            print("[INFO] Creating backend/.env from backend/.env.example...")
+            shutil.copy(backend_env_example, backend_env)
+        elif root_env_example.exists():
+            print("[INFO] Creating backend/.env from .env.example...")
+            shutil.copy(root_env_example, backend_env)
+        else:
+            print("[ERROR] Neither backend/.env nor backend/.env.example was found!")
+            sys.exit(1)
+
+def load_env():
+    ensure_env_file()
+    backend_env = backend_dir / ".env"
+    if backend_env.exists():
+        with open(backend_env, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -25,11 +41,11 @@ def load_env():
 
 def check_postgres():
     print("\n[SETUP] Checking PostgreSQL Database Connection...")
-    db_url = os.environ.get("DATABASE_URL", "")
+    db_url = os.environ.get("DATABASE_URL", "").strip()
     if not db_url:
         print("[ERROR] DATABASE_URL is missing in backend/.env configuration!")
         print("-> Please specify DATABASE_URL in backend/.env (e.g. postgresql://postgres:postgres@localhost:5432/ai_software_team)")
-        return False
+        sys.exit(1)
 
     try:
         import psycopg2
@@ -68,23 +84,23 @@ def check_postgres():
                     print(f"[SUCCESS] Database '{db_name}' created successfully on PostgreSQL server.")
                     return True
                 except Exception as create_err:
-                    print(f"[WARNING] Automatic creation of database '{db_name}' failed: {create_err}")
+                    print(f"[ERROR] Automatic creation of database '{db_name}' failed: {create_err}")
                     print(f"[INFO] Please manually create database '{db_name}' in PostgreSQL.")
-                    return False
+                    sys.exit(1)
             else:
                 print(f"[ERROR] Could not connect to PostgreSQL server at {host}:{port}.")
                 print(f"Error details: {err_str.strip()}")
                 print("-> Please verify PostgreSQL is installed and running.")
                 print("-> Verify your username, password, host, and port in backend/.env match your local PostgreSQL installation.")
-                return False
+                sys.exit(1)
 
     except ImportError:
-        print("[WARNING] psycopg2 module is not available in Python environment.")
-        return False
+        print("[ERROR] psycopg2 module is not available in Python environment.")
+        sys.exit(1)
     except Exception as e:
         print(f"[ERROR] Connection check failed: {e}")
         print("-> Please verify PostgreSQL service status and backend/.env credentials.")
-        return False
+        sys.exit(1)
 
 def check_ollama():
     print("\n[SETUP] Checking Ollama AI Service Connection...")
